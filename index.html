@@ -84,7 +84,6 @@
         }
 
         // Base64 to ArrayBuffer conversion for the audio mimeType workaround (standard for TTS)
-        // Not used here, but good practice for API interaction utility functions.
         function base64ToArrayBuffer(base64) {
             const binaryString = atob(base64);
             const len = binaryString.length;
@@ -120,9 +119,12 @@
             
             const userQuery = `Find the latest quarterly results, P&L, and balance sheet summary for the company: ${companyName}. Focus on data from credible sources like Screener.in or equivalent.`;
 
-            // IMPORTANT: If running this file outside of the Canvas environment, you MUST replace the empty string below
-            // with your actual Gemini API Key. If the key is left empty, the application will only work inside the Canvas.
-            const apiKey = "AIzaSyD-lUG6-GIwYt6tKRcpW9Rnr7iqwF0tHiE" 
+            // IMPORTANT FOR DEPLOYMENT: 
+            // 1. Inside this Canvas, the API key is automatically provided (set to "").
+            // 2. To deploy to Netlify/Vercel, replace "" with your actual key and then restrict the key's usage.
+            // 3. Alternatively (safest for deployment): Set up an environment variable (e.g., REACT_APP_GEMINI_KEY) 
+            //    in your hosting provider and use that instead of hardcoding the key here.
+            const apiKey = "" 
 
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
