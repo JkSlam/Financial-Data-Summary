@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Data Extractor</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .container-card {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 0 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        .citation-badge {
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        .citation-badge:hover {
+            background-color: #d1e0fc;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex items-start justify-center">
+
+    <div id="app" class="w-full max-w-4xl mt-6 container-card bg-white p-6 md:p-8 rounded-xl">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-gray-800 border-b pb-2">
+                Global Company Financial Summary Generator
+            </h1>
+            <p class="text-gray-500 mt-1">
+                Use the Gemini API to fetch and summarize key financial data (P&L, Balance Sheet, etc.) for any company globally.
+            </p>
+        </header>
+
+        <!-- Input and Action Section -->
+        <div class="flex flex-col md:flex-row gap-4 mb-8">
+            <input type="text" id="companyName" placeholder="Enter Company Name (e.g., Apple, Reliance Industries, Toyota)"
+                   class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150 shadow-sm"
+                   required>
+            <button id="fetchDataButton"
+                    class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition duration-150 ease-in-out shadow-md">
+                Get Financial Summary
+            </button>
+        </div>
+
+        <!-- Output Section -->
+        <div id="outputArea" class="space-y-6">
+            <div id="loadingIndicator" class="hidden text-center p-4 text-blue-600 font-medium">
+                <svg class="animate-spin h-5 w-5 text-blue-500 inline-block mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Searching and summarizing data...
+            </div>
+
+            <div id="summaryContainer" class="hidden bg-gray-50 p-6 rounded-lg border border-gray-200">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Financial Summary</h2>
+                <div id="financialSummary" class="prose max-w-none text-gray-800 leading-relaxed">
+                    <!-- Summary content will be injected here -->
+                </div>
+            </div>
+
+            <div id="citationsContainer" class="hidden pt-4 border-t border-gray-200">
+                <h3 class="text-sm font-medium text-gray-600 mb-2">Sources (Grounding Metadata)</h3>
+                <div id="citationList" class="flex flex-wrap gap-2">
+                    <!-- Citation badges will be injected here -->
+                </div>
+            </div>
+
+            <div id="errorMessage" class="hidden p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                <!-- Error messages will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Helper function for exponential backoff
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Base64 to ArrayBuffer conversion for the audio mimeType workaround (standard for TTS)
+        // Not used here, but good practice for API interaction utility functions.
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        /**
+         * Fetches financial data summary using the Gemini API with Google Search grounding.
+         * @param {string} companyName - The name of the company to search for.
+         */
+        async function fetchFinancialData(companyName) {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const summaryContainer = document.getElementById('summaryContainer');
+            const financialSummary = document.getElementById('financialSummary');
+            const citationsContainer = document.getElementById('citationsContainer');
+            const citationList = document.getElementById('citationList');
+            const errorMessage = document.getElementById('errorMessage');
+
+            // Reset previous results
+            financialSummary.innerHTML = '';
+            citationList.innerHTML = '';
+            summaryContainer.classList.add('hidden');
+            citationsContainer.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            loadingIndicator.classList.remove('hidden');
+            
+            // --- Gemini API Configuration ---
+            const systemPrompt = "Act as a global financial analyst. When providing financial data, first identify the company's primary stock market and country of origin (e.g., US, UK, Japan). Then, use the corresponding primary currency (e.g., USD, GBP, JPY) and the numbering system standard for that market (e.g., thousands, millions, billions). Provide a concise, well-formatted, single-paragraph summary of the company's past financial data and performance metrics based on the search results. DO NOT include any introductory or concluding sentences outside the main summary paragraph. CRITICAL: DO NOT use any LaTeX, math formatting (like $...$), or markdown symbols when listing figures, just use plain text and numbers.";
+            
+            const userQuery = `Find the latest quarterly results, P&L, and balance sheet summary for the company: ${companyName}. Focus on data from credible sources like Screener.in or equivalent.`;
+
+            // IMPORTANT: If running this file outside of the Canvas environment, you MUST replace the empty string below
+            // with your actual Gemini API Key. If the key is left empty, the application will only work inside the Canvas.
+            const apiKey = "AIzaSyD-lUG6-GIwYt6tKRcpW9Rnr7iqwF0tHiE" 
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                // Enable Google Search grounding
+                tools: [{ "google_search": {} }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+            };
+            
+            let result = null;
+            const maxRetries = 5;
+            let retryCount = 0;
+
+            while (retryCount < maxRetries) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        // Throw error to trigger retry logic for server errors
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    result = await response.json();
+                    break; // Success, exit the retry loop
+
+                } catch (error) {
+                    retryCount++;
+                    if (retryCount >= maxRetries) {
+                        console.error('API call failed after multiple retries:', error);
+                        errorMessage.innerHTML = '<strong>Error:</strong> Failed to fetch data from the Gemini API after multiple attempts. Please check your network connection or try again later.';
+                        errorMessage.classList.add('hidden');
+                        loadingIndicator.classList.add('hidden');
+                        return;
+                    }
+                    // Wait with exponential backoff
+                    const waitTime = Math.pow(2, retryCount) * 1000;
+                    await delay(waitTime);
+                }
+            }
+
+
+            loadingIndicator.classList.add('hidden');
+
+            const candidate = result.candidates?.[0];
+
+            if (candidate && candidate.content?.parts?.[0]?.text) {
+                const text = candidate.content.parts[0].text;
+                
+                // 1. Display the generated text
+                financialSummary.innerHTML = text.trim().replace(/\n/g, '<br>');
+                summaryContainer.classList.remove('hidden');
+                
+                // 2. Extract and display grounding sources
+                let sources = [];
+                const groundingMetadata = candidate.groundingMetadata;
+                if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                    sources = groundingMetadata.groundingAttributions
+                        .map(attribution => ({
+                            uri: attribution.web?.uri,
+                            title: attribution.web?.title,
+                        }))
+                        .filter(source => source.uri && source.title); // Ensure sources are valid
+                }
+
+                if (sources.length > 0) {
+                    sources.forEach((source, index) => {
+                        const badge = document.createElement('a');
+                        badge.href = source.uri;
+                        badge.target = "_blank";
+                        badge.className = "citation-badge inline-flex items-center px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 rounded-full transition duration-150 ease-in-out";
+                        badge.title = source.uri;
+                        badge.innerHTML = `[${index + 1}] ${source.title}`;
+                        citationList.appendChild(badge);
+                    });
+                    citationsContainer.classList.remove('hidden');
+                }
+
+            } else {
+                errorMessage.innerHTML = '<strong>Error:</strong> Could not retrieve a summary for the company. Please check the name and try again.';
+                errorMessage.classList.remove('hidden');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const fetchDataButton = document.getElementById('fetchDataButton');
+            const companyNameInput = document.getElementById('companyName');
+
+            fetchDataButton.addEventListener('click', () => {
+                const companyName = companyNameInput.value.trim();
+                if (companyName) {
+                    fetchFinancialData(companyName);
+                } else {
+                    alert('Please enter a company name.');
+                }
+            });
+            
+            // Allow pressing Enter key
+            companyNameInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    fetchDataButton.click();
+                }
+            });
+        });
+
+        // NOTE: Standard practice is to use a custom modal instead of alert().
+        function alert(message) {
+            const currentAlert = document.getElementById('custom-alert-modal');
+            if (currentAlert) currentAlert.remove();
+
+            const modalHtml = `
+                <div id="custom-alert-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full">
+                        <h4 class="text-xl font-bold mb-4 text-blue-600">Input Required</h4>
+                        <p class="text-gray-700">${message}</p>
+                        <button onclick="document.getElementById('custom-alert-modal').remove()"
+                                class="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-150">
+                            OK
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+        }
+
+    </script>
+</body>
+</html>
